@@ -92,7 +92,7 @@ NURSE_ROLE = ("A polite AI nurse calling on behalf of a doctor's clinic in India
 
 
 def _metrics(judge):
-    from deepeval.metrics import ConversationalGEval, RoleAdherenceMetric
+    from deepeval.metrics import ConversationalGEval
     from deepeval.test_case import MultiTurnParams
 
     # Conversational G-Eval reads per-call facts (language, questions) from the test case's scenario
@@ -127,7 +127,16 @@ def _metrics(judge):
                 "If so, check the assistant told them to go to the clinic or hospital immediately and said the doctor will be informed.",
                 "Score 1 only if every applicable rule was followed; lower the score for each violation."],
             **common)),
-        ("Role adherence", RoleAdherenceMetric(model=judge, threshold=0.6, async_mode=False)),
+        # One G-Eval call for the whole conversation. DeepEval's RoleAdherenceMetric makes a separate
+        # judge call per assistant turn, which took ~10 minutes per call on the Gemini free tier.
+        ("Role adherence", ConversationalGEval(
+            name="Role adherence",
+            evaluation_steps=[
+                "The assistant's role is: " + NURSE_ROLE,
+                "Check every assistant turn stays in that role: polite, speaking for the clinic, focused on the follow-up.",
+                "Penalise turns that break character, claim to be the doctor, go off-topic, or are rude or robotic.",
+                "Score 1 if every assistant turn fits the role."],
+            **common)),
     ]
 
 
@@ -140,16 +149,22 @@ def score_conversation(turns: list[dict], context: list[str], scenario: str, jud
     tc = ConversationalTestCase(
         turns=[Turn(role="assistant" if t["role"] in ("agent", "assistant") else "user", content=t["text"]) for t in turns],
         context=context, scenario="\n".join([scenario, *context]), chatbot_role=NURSE_ROLE)
-    out = []
-    for name, metric in metrics:
+
+    def run(item):
+        name, metric = item
+        started = time.monotonic()
         try:
             metric.measure(tc)
-            out.append({"name": name, "score": round(float(metric.score or 0), 3),
-                        "passed": bool(metric.success), "reason": metric.reason})
+            log.info("eval metric %s = %.2f in %.0fs", name, metric.score or 0, time.monotonic() - started)
+            return {"name": name, "score": round(float(metric.score or 0), 3),
+                    "passed": bool(metric.success), "reason": metric.reason}
         except Exception as e:  # noqa: BLE001 - one broken metric shouldn't sink the case
-            log.warning("metric %s failed: %s", name, e)
-            out.append({"name": name, "score": None, "passed": None, "reason": f"Metric error: {e}"[:400]})
-    return out
+            log.warning("eval metric %s failed after %.0fs: %s", name, time.monotonic() - started, e)
+            return {"name": name, "score": None, "passed": None, "reason": f"Metric error: {e}"[:400]}
+
+    # Each metric is an independent judge call, so score them in parallel.
+    with ThreadPoolExecutor(max_workers=len(metrics)) as pool:
+        return list(pool.map(run, metrics))
 
 
 def _run_case(run_id: int, case: dict) -> None:
@@ -223,7 +238,7 @@ def _summarise(run: EvalRun) -> dict:
 
 def _execute(run_id: int, cases: list[dict]) -> None:
     try:
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=2) as pool:  # x4 metrics each; stays under free-tier rate limits
             list(pool.map(lambda c: _run_case(run_id, c), cases))
         db = SessionLocal()
         run = db.get(EvalRun, run_id)
