@@ -45,7 +45,40 @@ def _format_transcript(entries: list[dict]) -> str:
     return "\n".join(f"{i + 1}. Speaker {e['speaker']}: {e['text']}" for i, e in enumerate(entries))
 
 
+# Visits being processed by *this* server process. A visit stuck in "processing" that isn't in
+# here lost its worker (Render redeploy or free-tier spin-down) and is safe to restart.
+_active_visits: set[int] = set()
+_active_lock = threading.Lock()
+
+
+def is_processing_here(visit_id: int) -> bool:
+    with _active_lock:
+        return visit_id in _active_visits
+
+
 def process_visit(visit_id: int) -> None:
+    with _active_lock:
+        if visit_id in _active_visits:
+            return
+        _active_visits.add(visit_id)
+    try:
+        _process_visit(visit_id)
+    finally:
+        with _active_lock:
+            _active_visits.discard(visit_id)
+
+
+def resume_stuck_visits() -> None:
+    """On startup: restart any visit left in "processing" by a previous server instance."""
+    db = SessionLocal()
+    ids = [v.id for v in db.query(Visit.id).filter(Visit.status == "processing").all()]
+    db.close()
+    for vid in ids:
+        log.info("resuming visit %s left in processing by a previous instance", vid)
+        threading.Thread(target=process_visit, args=(vid,), daemon=True).start()
+
+
+def _process_visit(visit_id: int) -> None:
     db = SessionLocal()
     try:
         visit = db.get(Visit, visit_id)

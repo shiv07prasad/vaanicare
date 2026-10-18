@@ -243,6 +243,17 @@ def _execute(run_id: int, cases: list[dict]) -> None:
         _run_lock.release()
 
 
+def fail_orphaned_runs() -> None:
+    """On startup: a run still marked running belonged to a previous server instance."""
+    db = SessionLocal()
+    for run in db.query(EvalRun).filter(EvalRun.status == "running").all():
+        run.status, run.finished_at = "failed", utcnow()
+        run.error = "The server restarted during this run. Run evals again to finish the remaining calls."
+        run.summary = _summarise(run)
+    db.commit()
+    db.close()
+
+
 def start_run() -> int:
     if not config.GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY is not set, so Gemma 4 can't judge the calls.")

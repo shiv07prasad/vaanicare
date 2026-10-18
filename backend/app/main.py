@@ -22,6 +22,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.on_event("startup")
 def _startup():
     init_db()
+    # Background work lives in this process; a redeploy or free-tier spin-down kills it mid-way.
+    pipeline.resume_stuck_visits()
+    evals.fail_orphaned_runs()
 
 
 def get_db():
@@ -174,6 +177,9 @@ async def create_visit(pid: int, background: BackgroundTasks, audio: UploadFile 
 @app.get("/api/visits/{vid}")
 def visit_route(vid: int, background: BackgroundTasks, db: Session = Depends(get_db)):
     d = get_visit(vid, db)
+    # Watchdog: "processing" with no worker in this instance means the worker died; restart it.
+    if d["status"] == "processing" and not pipeline.is_processing_here(vid):
+        background.add_task(pipeline.process_visit, vid)
     # Webhook fallback: while the page polls a call that is still "calling", ask Sarvam directly.
     if config.calling_configured():
         for c in d["calls"]:
