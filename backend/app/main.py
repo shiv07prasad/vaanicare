@@ -196,10 +196,26 @@ def get_visit(vid: int, db: Session) -> dict:
 
 
 @app.get("/api/visits/{vid}/audio")
-def get_audio(vid: int, db: Session = Depends(get_db)):
+def get_audio(vid: int, request: Request, db: Session = Depends(get_db)):
     v = db.query(Visit).options(undefer(Visit.audio)).filter(Visit.id == vid).first() or _404("Visit")
-    return Response(content=v.audio, media_type=(v.audio_mime or "audio/webm").split(";")[0],
-                    headers={"Cache-Control": "private, max-age=3600"})
+    data = v.audio or b""
+    mime = (v.audio_mime or "audio/webm").split(";")[0]
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600"}
+    # Browsers only allow seeking in <audio> when the server honours byte-range requests.
+    rng = request.headers.get("range", "")
+    if rng.startswith("bytes=") and data:
+        start_s, _, end_s = rng[6:].split(",")[0].strip().partition("-")
+        size = len(data)
+        if start_s:
+            start, end = int(start_s), int(end_s) if end_s else size - 1
+        else:  # suffix range: last N bytes
+            start, end = max(0, size - int(end_s)), size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return Response(content=data[start:end + 1], status_code=206, media_type=mime, headers=headers)
+    return Response(content=data, media_type=mime, headers=headers)
 
 
 class VisitPatch(BaseModel):
