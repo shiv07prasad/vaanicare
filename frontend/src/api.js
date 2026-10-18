@@ -36,6 +36,11 @@ export const api = {
     request(`/api/visits/${visitId}/call?simulate=${simulate}`, { method: 'POST' }),
   alerts: () => request('/api/alerts'),
   acknowledge: (callId) => request(`/api/calls/${callId}/acknowledge`, { method: 'POST' }),
+  evalsInfo: () => request('/api/evals/info'),
+  evalRuns: () => request('/api/evals/runs'),
+  evalRun: (id) => request(`/api/evals/runs/${id}`),
+  evalCalls: () => request('/api/evals/calls'),
+  startEval: () => request('/api/evals/run', { method: 'POST' }),
 }
 
 // SQLite drops the timezone; the server always stores UTC.

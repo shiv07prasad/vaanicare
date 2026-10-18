@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, fmtDuration } from '../api.js'
 import Modal from './Modal.jsx'
 import { IsoWave } from './Iso.jsx'
+import AudioPlayer from './AudioPlayer.jsx'
+
+// Pre-generated consultations (Sarvam text-to-speech, two voices), served from /samples
+const SAMPLES = [
+  { id: 'hindi', label: 'हिन्दी', lang: 'Hindi', topic: 'Acidity · 43s' },
+  { id: 'english', label: 'English', lang: 'English', topic: 'Viral throat infection · 46s' },
+  { id: 'kannada', label: 'ಕನ್ನಡ', lang: 'Kannada', topic: 'High blood pressure · 40s' },
+  { id: 'tamil', label: 'தமிழ்', lang: 'Tamil', topic: 'Diabetes · 36s' },
+]
 
 function pickMime() {
   const options = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
@@ -13,6 +22,7 @@ export default function Recorder({ patient, onClose, onUploaded }) {
   const [elapsed, setElapsed] = useState(0)
   const [blob, setBlob] = useState(null)
   const [error, setError] = useState('')
+  const [sampleName, setSampleName] = useState('')
   const [level, setLevel] = useState(0)
   const [doctor, setDoctor] = useState(() => localStorage.getItem('doctorName') || '')
   const rec = useRef(null)
@@ -77,9 +87,19 @@ export default function Recorder({ patient, onClose, onUploaded }) {
     else { rec.current.resume(); setState('recording') }
   }
 
-  function onFile(e) {
-    const f = e.target.files?.[0]
-    if (f) { setBlob(f); setState('done'); setElapsed(0) }
+  async function pickSample(sample) {
+    setError('')
+    try {
+      const res = await fetch(`/samples/${sample.id}.wav`)
+      if (!res.ok) throw new Error('Sample not found')
+      const file = new File([await res.blob()], `${sample.id}.wav`, { type: 'audio/wav' })
+      setBlob(file)
+      setSampleName(sample.lang)
+      setState('done')
+      setElapsed(0)
+    } catch (e) {
+      setError(`Could not load the ${sample.lang} sample: ${e.message}`)
+    }
   }
 
   async function upload() {
@@ -113,7 +133,7 @@ export default function Recorder({ patient, onClose, onUploaded }) {
             {state === 'idle' && 'Ready to record'}
             {state === 'recording' && 'Recording…'}
             {state === 'paused' && 'Paused'}
-            {state === 'done' && 'Recording ready'}
+            {state === 'done' && (sampleName ? `${sampleName} sample ready` : 'Recording ready')}
             {state === 'uploading' && 'Uploading…'}
           </div>
         </div>
@@ -121,9 +141,17 @@ export default function Recorder({ patient, onClose, onUploaded }) {
         {state === 'idle' && (
           <>
             <button className="btn primary big" onClick={start}>● Start recording</button>
-            <label className="link-btn">or upload an audio file
-              <input type="file" accept="audio/*" hidden onChange={onFile} />
-            </label>
+            <div className="samples">
+              <div className="samples-label">[ Or use a sample consultation ]</div>
+              <div className="samples-grid">
+                {SAMPLES.map((s) => (
+                  <button key={s.id} type="button" className="sample" onClick={() => pickSample(s)}>
+                    <span className="sample-lang">{s.label}</span>
+                    <span className="sample-topic">{s.topic}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         )}
         {recording && (
@@ -134,9 +162,9 @@ export default function Recorder({ patient, onClose, onUploaded }) {
         )}
         {(state === 'done' || state === 'uploading') && blob && (
           <>
-            <audio controls src={blobUrl} className="audio" />
+            <AudioPlayer src={blobUrl} />
             <div className="actions center">
-              <button className="btn" disabled={state === 'uploading'} onClick={() => { setBlob(null); setState('idle') }}>Discard</button>
+              <button className="btn" disabled={state === 'uploading'} onClick={() => { setBlob(null); setSampleName(''); setState('idle') }}>Discard</button>
               <button className="btn primary" disabled={state === 'uploading'} onClick={upload}>
                 {state === 'uploading' ? 'Uploading…' : 'Save & transcribe'}
               </button>

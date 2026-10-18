@@ -31,6 +31,11 @@ services:
         sync: false
       - key: SARVAM_AGENT_PHONE
         sync: false
+      # Gemma 4 on the Gemini API judges the follow-up call evals
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EVAL_MODEL
+        value: gemma-4-26b-a4b-it
 
 databases:
   - name: vaanicare-db

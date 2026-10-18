@@ -1,5 +1,8 @@
 """Background jobs: visit transcription + notes, and follow-up call analysis."""
 import logging
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 import traceback
 
 from . import sarvam
@@ -12,6 +15,9 @@ You receive a diarized transcript of a consultation between a doctor and a patie
 The conversation may be in Hindi, English, another Indian language, or a mix.
 Respond with a single JSON object, written in English, with these keys:
 - "speaker_roles": object mapping each speaker id to "Doctor" or "Patient" (or "Attendant" for a relative).
+- "line_roles": array with one entry per numbered transcript line, each "Doctor", "Patient" or "Attendant",
+  judged from what is said (questions about symptoms and instructions come from the doctor). This matters
+  when speaker separation failed and one speaker id covers both people.
 - "summary": 2-4 sentence summary of the visit.
 - "diagnosis": the doctor's diagnosis or working impression with key symptoms and findings. If not stated, give the most likely impression and mark it "(provisional)".
 - "prescription": medicines with dose, frequency and duration, plus tests and advice, one per line. Only include what the doctor actually said.
@@ -36,7 +42,7 @@ Respond with JSON: {"transcript": [{"role": "agent" | "user", "text": "..."}]}""
 
 
 def _format_transcript(entries: list[dict]) -> str:
-    return "\n".join(f"Speaker {e['speaker']}: {e['text']}" for e in entries)
+    return "\n".join(f"{i + 1}. Speaker {e['speaker']}: {e['text']}" for i, e in enumerate(entries))
 
 
 def process_visit(visit_id: int) -> None:
@@ -79,7 +85,14 @@ def process_visit(visit_id: int) -> None:
         for k, v in (notes.get("speaker_roles") or {}).items():
             digits = "".join(ch for ch in str(k) if ch.isdigit())
             roles[str(int(digits)) if digits else str(k)] = v
-        for e in entries:
+        # Prefer the LLM's per-line roles: on noisy audio, diarization can put both people under one
+        # speaker id (or split one person across two), which a per-speaker mapping can't fix.
+        line_roles = [str(r) for r in (notes.get("line_roles") or [])]
+        use_lines = len(line_roles) == len(entries)
+        for i, e in enumerate(entries):
+            if use_lines and line_roles[i] in ("Doctor", "Patient", "Attendant"):
+                e["role"] = str(line_roles[i])
+                continue
             key = str(int(e["speaker"])) if e["speaker"].isdigit() else e["speaker"]
             e["role"] = roles.get(key,f"Speaker {int(e['speaker']) + 1}" if e["speaker"].isdigit() else e["speaker"])
 
@@ -191,6 +204,58 @@ def simulate_call(call_id: int) -> None:
         call.status = "failed"
         call.failure_reason = str(e)[:2000]
         db.commit()
+    finally:
+        db.close()
+    analyze_call(call_id)
+
+
+# ---------------------------------------------------------------- webhook fallback
+
+_last_check: dict[int, float] = {}
+_check_lock = threading.Lock()
+STATUS_MAP = {"connected": "connected", "no_answer": "no_answer", "busy": "busy", "failed": "failed"}
+
+
+def reconcile_call(call_id: int, min_interval: float = 20.0) -> None:
+    """Pulls a finished call's result from Sarvam when the webhook hasn't arrived
+    (dead tunnel locally, app asleep on Render, or a dropped delivery)."""
+    now = time.time()
+    with _check_lock:
+        if now - _last_check.get(call_id, 0) < min_interval:
+            return
+        _last_check[call_id] = now
+    db = SessionLocal()
+    try:
+        call = db.get(FollowUpCall, call_id)
+        if not call or call.status != "initiated" or not call.attempt_id or call.simulated:
+            return
+        attempt = sarvam.find_attempt(call.attempt_id, call.created_at)
+        age = datetime.now(timezone.utc) - (call.created_at if call.created_at.tzinfo else call.created_at.replace(tzinfo=timezone.utc))
+        if attempt is None:
+            if age > timedelta(minutes=20):
+                call.status, call.failure_reason = "failed", "No result from Sarvam after 20 minutes."
+                db.commit()
+                analyze_call(call_id)
+            return
+        status = STATUS_MAP.get(str(attempt.get("connectivity_status") or "").lower())
+        if status is None or (status == "connected" and not attempt.get("end_datetime")):
+            return  # still ringing or in progress
+        call.status = status
+        reason = attempt.get("failure_reason")
+        call.failure_reason = None if reason in (None, "NO_FAILURE_REASON") else reason
+        call.duration = int(attempt["duration_in_seconds"]) if attempt.get("duration_in_seconds") else None
+        call.interaction_id = attempt.get("interaction_id")
+        call.raw_payload = {"source": "analytics_fallback", "attempt": {k: attempt.get(k) for k in (
+            "attempt_id", "connectivity_status", "ended_by", "duration_in_seconds", "language_name", "num_messages")}}
+        if call.interaction_id:
+            msgs = sarvam.fetch_call_transcript(call.interaction_id)
+            call.transcript = [{"role": m.get("role"), "text": m.get("content"),
+                                "language": m.get("language_name")} for m in msgs] or None
+        db.commit()
+        log.info("call %s reconciled from Sarvam analytics: %s", call_id, status)
+    except Exception:  # noqa: BLE001 - try again on the next poll
+        log.warning("reconcile of call %s failed: %s", call_id, traceback.format_exc())
+        return
     finally:
         db.close()
     analyze_call(call_id)

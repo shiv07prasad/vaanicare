@@ -9,8 +9,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, undefer
 
-from . import config, pipeline, sarvam
-from .db import FollowUpCall, Patient, SessionLocal, Visit, init_db
+from . import config, evals, pipeline, sarvam
+from .db import EvalResult, EvalRun, FollowUpCall, Patient, SessionLocal, Visit, init_db
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("app")
@@ -172,7 +172,17 @@ async def create_visit(pid: int, background: BackgroundTasks, audio: UploadFile 
 
 
 @app.get("/api/visits/{vid}")
-def get_visit(vid: int, db: Session = Depends(get_db)):
+def visit_route(vid: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+    d = get_visit(vid, db)
+    # Webhook fallback: while the page polls a call that is still "calling", ask Sarvam directly.
+    if config.calling_configured():
+        for c in d["calls"]:
+            if c["status"] == "initiated" and not c["simulated"]:
+                background.add_task(pipeline.reconcile_call, c["id"])
+    return d
+
+
+def get_visit(vid: int, db: Session) -> dict:
     v = db.get(Visit, vid) or _404("Visit")
     d = ser_visit(v)
     d["patient"] = ser_patient(v.patient)
@@ -231,8 +241,6 @@ def call_now(vid: int, background: BackgroundTasks, simulate: bool = False, db: 
         raise HTTPException(400, "Add at least one follow-up question first")
     if not simulate and not config.calling_configured():
         raise HTTPException(400, "Sarvam calling is not configured yet. Use 'Simulate call' or set the SARVAM_* env vars.")
-    if not simulate and not config.PUBLIC_BASE_URL:
-        raise HTTPException(400, "PUBLIC_BASE_URL is not set, so Sarvam cannot send the call result back.")
 
     patient = v.patient
     lang_code = v.language_code or patient.language_code
@@ -259,7 +267,8 @@ def call_now(vid: int, background: BackgroundTasks, simulate: bool = False, db: 
     try:
         call.attempt_id = sarvam.place_outbound_call(
             phone=patient.phone, language_code=lang_code, variables=variables,
-            webhook_url=f"{config.PUBLIC_BASE_URL}/api/webhooks/sarvam-call",
+            # Without a public URL (local dev) the result is pulled from Sarvam's analytics instead.
+            webhook_url=f"{config.PUBLIC_BASE_URL}/api/webhooks/sarvam-call" if config.PUBLIC_BASE_URL else None,
             metadata={"call_id": call.id, "visit_id": v.id},
         )
     except Exception as e:  # noqa: BLE001
@@ -320,6 +329,74 @@ def acknowledge(cid: int, db: Session = Depends(get_db)):
     c.acknowledged = True
     db.commit()
     return ser_call(c)
+
+
+# ---------------------------------------------------------------- evals
+
+def ser_run(r: EvalRun, with_results: bool = False) -> dict:
+    d = {"id": r.id, "created_at": r.created_at, "finished_at": r.finished_at, "source": r.source,
+         "judge_model": r.judge_model, "status": r.status, "total": r.total, "completed": r.completed,
+         "summary": r.summary, "error": r.error}
+    if with_results:
+        d["results"] = [{
+            "id": x.id, "case_key": x.case_key, "title": x.title, "call_id": x.call_id, "context": x.context,
+            "transcript": x.transcript or [], "expected": x.expected, "app_triage": x.app_triage,
+            "metrics": x.metrics or [], "passed": x.passed, "error": x.error,
+        } for x in r.results]
+    return d
+
+
+def ser_result(x: EvalResult) -> dict:
+    return {"id": x.id, "run_id": x.run_id, "title": x.title, "call_id": x.call_id, "context": x.context,
+            "transcript": x.transcript or [], "metrics": x.metrics or [], "passed": x.passed, "error": x.error}
+
+
+@app.get("/api/evals/info")
+def evals_info(db: Session = Depends(get_db)):
+    running = db.query(EvalRun).filter(EvalRun.status == "running").order_by(EvalRun.id.desc()).first()
+    return {"judge_model": config.EVAL_MODEL, "judge_ready": bool(config.GEMINI_API_KEY),
+            "pending_calls": evals.pending_count(db), "evaluated_calls": len(evals.evaluated_call_ids(db)),
+            "running": ser_run(running) if running else None}
+
+
+@app.get("/api/evals/calls")
+def evals_calls(db: Session = Depends(get_db)):
+    """Latest successful evaluation for every evaluated call, plus averages across them."""
+    latest: dict[int, EvalResult] = {}
+    for x in (db.query(EvalResult).filter(EvalResult.call_id.isnot(None), EvalResult.error.is_(None))
+              .order_by(EvalResult.id).all()):
+        latest[x.call_id] = x
+    results = sorted(latest.values(), key=lambda x: x.id, reverse=True)
+    by_metric: dict[str, list[float]] = {}
+    for x in results:
+        for m in x.metrics or []:
+            if m.get("score") is not None:
+                by_metric.setdefault(m["name"], []).append(m["score"])
+    return {
+        "summary": {"metrics": {k: round(sum(v) / len(v), 3) for k, v in by_metric.items()},
+                    "passed": sum(1 for x in results if x.passed), "total": len(results)},
+        "results": [ser_result(x) for x in results],
+    }
+
+
+@app.post("/api/evals/run")
+def evals_run():
+    try:
+        return {"id": evals.start_run()}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/evals/runs")
+def evals_runs(db: Session = Depends(get_db)):
+    runs = db.query(EvalRun).filter(EvalRun.source == "real").order_by(EvalRun.created_at.desc()).limit(30).all()
+    return [ser_run(r) for r in runs]
+
+
+@app.get("/api/evals/runs/{rid}")
+def evals_run_detail(rid: int, db: Session = Depends(get_db)):
+    r = db.get(EvalRun, rid) or _404("Eval run")
+    return ser_run(r, with_results=True)
 
 
 # ---------------------------------------------------------------- frontend

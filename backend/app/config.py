@@ -23,6 +23,7 @@ SARVAM_API_KEY = _env("SARVAM_API_KEY")
 SARVAM_STT_MODEL = _env("SARVAM_STT_MODEL", "saaras:v3")
 SARVAM_STT_LANGUAGE = _env("SARVAM_STT_LANGUAGE", "unknown")  # "unknown" = auto-detect
 SARVAM_LLM_MODEL = _env("SARVAM_LLM_MODEL", "sarvam-105b")
+SARVAM_REASONING = _env("SARVAM_REASONING").lower() or None  # None = reasoning off
 SARVAM_CHAT_URL = _env("SARVAM_CHAT_URL", "https://api.sarvam.ai/v1/chat/completions")
 
 # Sarvam Voice Agents (outbound follow-up calls)
@@ -33,6 +34,11 @@ SARVAM_AGENT_ID = _env("SARVAM_AGENT_ID")
 SARVAM_AGENT_VERSION = int(_env("SARVAM_AGENT_VERSION", "1") or 1)
 SARVAM_CONNECTION_ID = _env("SARVAM_CONNECTION_ID")
 SARVAM_AGENT_PHONE = _env("SARVAM_AGENT_PHONE")
+
+# Evals: Gemma 4 on the Gemini API is the DeepEval judge
+GEMINI_API_KEY = _env("GEMINI_API_KEY")
+EVAL_MODEL = _env("EVAL_MODEL", "gemma-4-26b-a4b-it")
+EVAL_FALLBACK_MODELS = [m for m in ["gemma-4-26b-a4b-it", "gemma-4-31b-it"] if m != EVAL_MODEL]
 
 # Mock mode: fake Sarvam responses so the app can be demoed without keys.
 MOCK_SARVAM = _env("MOCK_SARVAM", "auto").lower()

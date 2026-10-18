@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Link, useParams } from 'react-router-dom'
 import { api, fmtDate, fmtDuration } from '../api.js'
 import { CallMeta, CallTranscript, SeverityPill, StatusPill } from '../components/bits.jsx'
+import AudioPlayer from '../components/AudioPlayer.jsx'
 
 const ROLE_CLASS = { Doctor: 'doctor', Patient: 'patient' }
 
@@ -51,7 +52,7 @@ export default function VisitPage({ status, onAlertsChange }) {
 
       <div className="card audio-card">
         <div className="card-label">Consultation recording</div>
-        <audio ref={audioRef} controls preload="metadata" src={visit.audio_url} className="audio" />
+        <AudioPlayer ref={audioRef} src={visit.audio_url} />
       </div>
 
       {visit.status === 'processing' && (

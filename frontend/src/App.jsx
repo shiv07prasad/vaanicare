@@ -7,6 +7,7 @@ import Patients from './pages/Patients.jsx'
 import PatientDetail from './pages/PatientDetail.jsx'
 import VisitPage from './pages/VisitPage.jsx'
 import Alerts from './pages/Alerts.jsx'
+import Evals from './pages/Evals.jsx'
 
 function Shell({ status, alertCount }) {
   return (
@@ -22,6 +23,7 @@ function Shell({ status, alertCount }) {
           <NavLink to="/alerts">
             Alerts {alertCount > 0 && <span className="badge-count">{alertCount}</span>}
           </NavLink>
+          <NavLink to="/evals">Evals</NavLink>
         </nav>
       </header>
       {status?.mock_mode && (
@@ -54,6 +56,7 @@ export default function App() {
         <Route path="/patients/:id" element={<PatientDetail />} />
         <Route path="/visits/:id" element={<VisitPage status={status} onAlertsChange={setAlertCount} />} />
         <Route path="/alerts" element={<Alerts onChange={setAlertCount} />} />
+        <Route path="/evals" element={<Evals />} />
       </Route>
     </Routes>
   )

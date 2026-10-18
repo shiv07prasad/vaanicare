@@ -81,5 +81,38 @@ class FollowUpCall(Base):
     patient = relationship("Patient")
 
 
+class EvalRun(Base):
+    __tablename__ = "eval_runs"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    finished_at = Column(DateTime(timezone=True))
+    source = Column(String(20))  # synthetic | real
+    judge_model = Column(String(80))
+    status = Column(String(20), default="running")  # running | done | failed
+    total = Column(Integer, default=0)
+    completed = Column(Integer, default=0)
+    summary = Column(JSON)  # {metric_name: avg score, pass_rate, triage_accuracy}
+    error = Column(Text)
+    results = relationship("EvalResult", back_populates="run", order_by="EvalResult.id",
+                           cascade="all, delete-orphan")
+
+
+class EvalResult(Base):
+    __tablename__ = "eval_results"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("eval_runs.id"), nullable=False, index=True)
+    case_key = Column(String(60))
+    title = Column(String(200))
+    call_id = Column(Integer, ForeignKey("followup_calls.id"))
+    context = Column(JSON)  # diagnosis, questions, language, persona
+    transcript = Column(JSON)  # [{role, text}]
+    expected = Column(JSON)  # {has_issues, min_severity, language_switch_to}
+    app_triage = Column(JSON)  # {has_issues, severity, issues, summary}
+    metrics = Column(JSON)  # [{name, score, passed, reason}]
+    passed = Column(Boolean)
+    error = Column(Text)
+    run = relationship("EvalRun", back_populates="results")
+
+
 def init_db():
     Base.metadata.create_all(engine)

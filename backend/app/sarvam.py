@@ -104,8 +104,11 @@ def chat_json(system: str, user: str, mock: dict | None = None) -> dict:
         "model": config.SARVAM_LLM_MODEL,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.2,
-        "max_tokens": 4096,
-        "reasoning_effort": "low",
+        # Reasoning tokens count against max_tokens; on short or garbled transcripts the model can
+        # think until the budget runs out and return no content at all. These are structured
+        # extraction tasks, so reasoning is off by default (SARVAM_REASONING=low|high to enable).
+        "max_tokens": 8192,
+        "reasoning_effort": config.SARVAM_REASONING,
         "response_format": {"type": "json_object"},
     }
     headers = {
@@ -123,7 +126,15 @@ def chat_json(system: str, user: str, mock: dict | None = None) -> dict:
                 continue
             if r.status_code >= 400:
                 raise RuntimeError(f"Sarvam LLM {r.status_code}: {r.text[:500]}")
-            content = r.json()["choices"][0]["message"].get("content") or ""
+            choice = r.json()["choices"][0]
+            content = choice["message"].get("content") or ""
+            if not content.strip():
+                usage = r.json().get("usage") or {}
+                last_err = RuntimeError(
+                    f"empty reply (finish_reason={choice.get('finish_reason')}, "
+                    f"reasoning tokens={(usage.get('completion_tokens_details') or {}).get('reasoning_tokens')})")
+                payload["reasoning_effort"] = None  # retry without reasoning
+                continue
             return _parse_json(content)
         except (requests.RequestException, ValueError) as e:
             last_err = e
@@ -150,7 +161,7 @@ def _agent_headers() -> dict:
 
 
 def place_outbound_call(phone: str, language_code: str | None, variables: dict,
-                        webhook_url: str, metadata: dict) -> str:
+                        webhook_url: str | None, metadata: dict) -> str:
     """Starts a Sarvam Voice Agent outbound call. Returns the attempt_id."""
     url = (f"https://apps.sarvam.ai/api/outbounds/v1/orgs/{config.SARVAM_ORG_ID}"
            f"/workspaces/{config.SARVAM_WORKSPACE_ID}/outbounds")
@@ -166,12 +177,31 @@ def place_outbound_call(phone: str, language_code: str | None, variables: dict,
             "app_overrides": {"initial_language_name": language_name(language_code)},
         },
         "user_config": {"user_phone_number": phone},
-        "webhook_config": {"url": webhook_url, "metadata": metadata},
     }
+    if webhook_url:
+        body["webhook_config"] = {"url": webhook_url, "metadata": metadata}
     r = requests.post(url, json=body, headers=_agent_headers(), timeout=30)
     if r.status_code >= 400:
         raise RuntimeError(f"Sarvam outbound {r.status_code}: {r.text[:500]}")
     return r.json()["attempt_id"]
+
+
+def find_attempt(attempt_id: str, placed_at) -> dict | None:
+    """Looks up an outbound attempt in Sarvam's analytics (used when the webhook never arrives)."""
+    from datetime import datetime, timedelta, timezone
+
+    if placed_at.tzinfo is None:  # SQLite drops the timezone; we always store UTC
+        placed_at = placed_at.replace(tzinfo=timezone.utc)
+    url = (f"https://apps.sarvam.ai/api/analytics/v1/{config.SARVAM_ORG_ID}/{config.SARVAM_WORKSPACE_ID}"
+           f"/{config.SARVAM_AGENT_ID}/attempts")
+    params = {
+        "start_datetime": (placed_at - timedelta(minutes=5)).isoformat(),
+        "end_datetime": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "limit": 200, "sort_by": "effective_datetime", "sort_order": "desc",
+    }
+    r = requests.get(url, headers=_agent_headers(), params=params, timeout=30)
+    r.raise_for_status()
+    return next((a for a in r.json().get("items") or [] if a.get("attempt_id") == attempt_id), None)
 
 
 def fetch_call_transcript(interaction_id: str) -> list[dict]:
