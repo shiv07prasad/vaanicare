@@ -268,7 +268,7 @@ export function CallCard({ call, onAck, showPatient }) {
           {call.acknowledged && <span className="muted small">Reviewed ✓</span>}
         </div>
       </div>
-      {open && <CallTranscript turns={turns} />}
+      {open && <CallTranscript turns={turns} patientName={call.patient_name} />}
     </div>
   )
 }

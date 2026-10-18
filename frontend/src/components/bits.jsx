@@ -16,15 +16,17 @@ export function SeverityPill({ severity }) {
   return <span className={`pill ${kind}`}>{severity} priority</span>
 }
 
-export function CallTranscript({ turns }) {
+export function CallTranscript({ turns, patientName }) {
   if (!turns?.length) return null
   return (
     <div className="chat">
       {turns.map((t, i) => {
         const agent = t.role === 'agent' || t.role === 'assistant'
+        // Sarvam reports "UNKNOWN" when it didn't detect the turn's language; don't show that.
+        const lang = t.language && t.language.toUpperCase() !== 'UNKNOWN' ? ` · ${t.language}` : ''
         return (
           <div key={i} className={`bubble ${agent ? 'left' : 'right'}`}>
-            <div className="bubble-who">{agent ? 'AI nurse' : 'Patient'}{t.language ? ` · ${t.language}` : ''}</div>
+            <div className="bubble-who">{agent ? 'AI nurse' : patientName || 'Patient'}{lang}</div>
             <div>{t.text}</div>
           </div>
         )
