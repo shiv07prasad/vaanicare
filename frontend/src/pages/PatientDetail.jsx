@@ -4,6 +4,7 @@ import { api, fmtDate } from '../api.js'
 import PatientForm from '../components/PatientForm.jsx'
 import Recorder from '../components/Recorder.jsx'
 import { StatusPill } from '../components/bits.jsx'
+import { IsoIcon } from '../components/Iso.jsx'
 
 export default function PatientDetail() {
   const { id } = useParams()
@@ -28,7 +29,7 @@ export default function PatientDetail() {
 
   return (
     <div>
-      <Link to="/" className="back">← All patients</Link>
+      <Link to="/app" className="back">← All patients</Link>
       <div className="page-head">
         <div className="patient-head">
           <div className="avatar">{patient.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</div>
@@ -44,9 +45,11 @@ export default function PatientDetail() {
         <button className="btn primary" onClick={() => setRecording(true)}>● Start consultation</button>
       </div>
 
+      <div className="eyebrow">[ Visit history ]</div>
       <h2 className="section-title">Sessions <span className="muted">({patient.visits.length})</span></h2>
       {patient.visits.length === 0 ? (
         <div className="empty card">
+          <IsoIcon icon="mic" size={120} />
           <h3>No sessions yet</h3>
           <p className="muted">Start a consultation to record and transcribe the conversation.</p>
         </div>

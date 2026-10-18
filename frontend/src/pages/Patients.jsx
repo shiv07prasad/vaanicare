@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, fmtDate } from '../api.js'
 import PatientForm from '../components/PatientForm.jsx'
+import { IsoIcon } from '../components/Iso.jsx'
 
 export default function Patients() {
   const [patients, setPatients] = useState(null)
@@ -18,7 +19,8 @@ export default function Patients() {
     <div>
       <div className="page-head">
         <div>
-          <h1>Patients</h1>
+          <div className="eyebrow">[ Patients ]</div>
+          <h1><span className="dim">Your</span> patients</h1>
           <p className="muted">Every clinic visit and follow-up call, organised by patient.</p>
         </div>
         <button className="btn primary" onClick={() => setShowForm(true)}>+ New patient</button>
@@ -30,6 +32,7 @@ export default function Patients() {
         <p className="muted">Loading…</p>
       ) : patients.length === 0 ? (
         <div className="empty card">
+          <IsoIcon icon="user" size={120} active />
           <h3>No patients yet</h3>
           <p className="muted">Add a patient to start recording a consultation.</p>
           <button className="btn primary" onClick={() => setShowForm(true)}>+ New patient</button>

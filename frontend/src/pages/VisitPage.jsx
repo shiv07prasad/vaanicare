@@ -39,7 +39,8 @@ export default function VisitPage({ status, onAlertsChange }) {
       <Link to={`/patients/${visit.patient_id}`} className="back">← {visit.patient.name}</Link>
       <div className="page-head">
         <div>
-          <h1>Visit · {fmtDate(visit.created_at)}</h1>
+          <div className="eyebrow">[ Consultation ]</div>
+          <h1><span className="dim">Visit ·</span> {fmtDate(visit.created_at)}</h1>
           <p className="muted">
             {[visit.patient.name, visit.patient.phone, visit.doctor_name, visit.language && `Spoken in ${visit.language}`]
               .filter(Boolean).join(' · ')}

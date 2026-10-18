@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, fmtDuration } from '../api.js'
 import Modal from './Modal.jsx'
+import { IsoWave } from './Iso.jsx'
 
 function pickMime() {
   const options = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
@@ -106,7 +107,7 @@ export default function Recorder({ patient, onClose, onUploaded }) {
         </label>
 
         <div className={`rec-orb ${state}`}>
-          <div className="rec-ring" style={{ transform: `scale(${1 + level * 0.35})` }} />
+          <IsoWave size={240} level={state === 'recording' ? level : 0.05} live={state === 'recording'} />
           <div className="rec-time">{fmtDuration(elapsed)}</div>
           <div className="rec-label">
             {state === 'idle' && 'Ready to record'}

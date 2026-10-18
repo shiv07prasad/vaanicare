@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api.js'
 import { CallCard } from './VisitPage.jsx'
+import { IsoIcon } from '../components/Iso.jsx'
 
 export default function Alerts({ onChange }) {
   const [alerts, setAlerts] = useState(null)
@@ -17,12 +18,13 @@ export default function Alerts({ onChange }) {
     <div>
       <div className="page-head">
         <div>
-          <h1>Alerts</h1>
+          <div className="eyebrow">[ Triage ]</div>
+          <h1><span className="dim">Follow-up</span> alerts</h1>
           <p className="muted">Follow-up calls where the AI found something the doctor should look at.</p>
         </div>
       </div>
       {alerts === null ? <p className="muted">Loading…</p> : alerts.length === 0 ? (
-        <div className="empty card"><h3>All clear</h3><p className="muted">No follow-up calls need your attention.</p></div>
+        <div className="empty card"><IsoIcon icon="check" size={120} /><h3>All clear</h3><p className="muted">No follow-up calls need your attention.</p></div>
       ) : (
         <div className="stack">
           {alerts.map((c) => (

@@ -333,4 +333,5 @@ if DIST.exists():
         file = DIST / path
         if path and file.is_file():
             return FileResponse(file)
-        return FileResponse(DIST / "index.html")
+        # index.html must never be cached, or browsers keep loading old asset hashes after a deploy
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache"})
