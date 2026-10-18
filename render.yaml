@@ -26,7 +26,7 @@ services:
       - key: SARVAM_AGENT_ID
         sync: false
       - key: SARVAM_AGENT_VERSION
-        value: "1"
+        value: "2"
       - key: SARVAM_CONNECTION_ID
         sync: false
       - key: SARVAM_AGENT_PHONE
